@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Дашборд сделок CRM</title>
+  <link rel="icon" href="/_gw/icon" />
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <div class="page">
+    <header class="top">
+      <div>
+        <p class="eyebrow">Битрикс24 · CRM</p>
+        <h1>Дашборд сделок</h1>
+        <p class="subtitle" id="subtitle">Сводка по воронке, ключевые показатели и последние сделки</p>
+      </div>
+      <form class="filters" id="filters">
+        <div class="presets" role="group" aria-label="Период">
+          <button type="button" data-preset="7" class="chip">7 дней</button>
+          <button type="button" data-preset="30" class="chip is-active">30 дней</button>
+          <button type="button" data-preset="90" class="chip">90 дней</button>
+          <button type="button" data-preset="all" class="chip">Все время</button>
+        </div>
+        <label>
+          С
+          <input type="date" id="from" name="from" />
+        </label>
+        <label>
+          По
+          <input type="date" id="to" name="to" />
+        </label>
+        <button type="submit" class="primary">Применить</button>
+      </form>
+    </header>
+
+    <p class="status" id="status" hidden></p>
+
+    <section class="kpis" id="kpis"></section>
+
+    <section class="card">
+      <div class="card-head">
+        <h2>Сводка по стадиям воронки</h2>
+        <p>Количество и сумма сделок на каждой стадии за выбранный период создания</p>
+      </div>
+      <div id="funnel"></div>
+    </section>
+
+    <section class="card">
+      <div class="card-head">
+        <h2>Последние сделки</h2>
+        <p>До 20 сделок, созданных в выбранном периоде</p>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Сделка</th>
+              <th>Сумма</th>
+              <th>Стадия</th>
+              <th>Ответственный</th>
+              <th>Создана</th>
+            </tr>
+          </thead>
+          <tbody id="recent"></tbody>
+        </table>
+      </div>
+    </section>
+  </div>
+  <script src="/app.js"></script>
+</body>
+</html>

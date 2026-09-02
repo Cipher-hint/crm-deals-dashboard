@@ -1,0 +1,170 @@
+:root {
+  --bg: #f4f6f8;
+  --card: #ffffff;
+  --text: #1c2026;
+  --muted: #6a737d;
+  --line: #e4e8ed;
+  --accent: #2fc6f6;
+  --accent-strong: #1aa8d6;
+  --ok: #7bd500;
+  --warn: #ffa900;
+  --danger: #ff5752;
+  --shadow: 0 1px 2px rgba(28, 32, 38, 0.06);
+  --radius: 12px;
+  font-family: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--text); }
+body { min-height: 100vh; }
+
+.page {
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: 24px 20px 48px;
+}
+
+.top {
+  display: flex;
+  justify-content: space-between;
+  gap: 24px;
+  align-items: flex-start;
+  margin-bottom: 20px;
+}
+
+.eyebrow {
+  margin: 0 0 6px;
+  color: var(--muted);
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+h1, h2 { margin: 0; font-weight: 650; }
+h1 { font-size: 28px; letter-spacing: -0.03em; }
+h2 { font-size: 18px; }
+.subtitle, .card-head p { margin: 6px 0 0; color: var(--muted); font-size: 14px; }
+
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: end;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 12px;
+  box-shadow: var(--shadow);
+}
+
+.presets { display: flex; gap: 6px; flex-wrap: wrap; }
+.chip, .primary, label input {
+  border: 1px solid var(--line);
+  background: #fff;
+  color: var(--text);
+  border-radius: 8px;
+  font: inherit;
+}
+
+.chip, .primary {
+  cursor: pointer;
+  padding: 8px 12px;
+  font-size: 13px;
+}
+
+.chip.is-active {
+  border-color: var(--accent);
+  background: #e9f8fe;
+  color: #0b6e8a;
+}
+
+.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #083445;
+  font-weight: 650;
+}
+
+.primary:hover { background: var(--accent-strong); border-color: var(--accent-strong); color: #fff; }
+label { display: grid; gap: 4px; font-size: 12px; color: var(--muted); }
+label input { padding: 7px 10px; min-width: 140px; color: var(--text); }
+
+.status {
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: #fff4f3;
+  color: #9b1c1c;
+  margin: 0 0 16px;
+}
+
+.kpis {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.kpi {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 16px 18px;
+  box-shadow: var(--shadow);
+}
+
+.kpi .label { color: var(--muted); font-size: 13px; margin-bottom: 8px; }
+.kpi .value { font-size: 26px; font-weight: 700; letter-spacing: -0.03em; }
+.kpi .hint { margin-top: 6px; color: var(--muted); font-size: 12px; }
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 18px;
+  margin-bottom: 16px;
+}
+
+.card-head { margin-bottom: 14px; }
+
+.stage {
+  display: grid;
+  grid-template-columns: minmax(180px, 1.2fr) 90px 140px minmax(160px, 1fr);
+  gap: 12px;
+  align-items: center;
+  padding: 8px 0;
+  border-top: 1px solid var(--line);
+}
+
+.stage:first-child { border-top: 0; }
+.stage-name { font-weight: 600; }
+.stage-cat { color: var(--muted); font-size: 12px; margin-top: 2px; }
+.num { text-align: right; font-variant-numeric: tabular-nums; }
+.bar {
+  height: 8px;
+  background: #eef2f5;
+  border-radius: 99px;
+  overflow: hidden;
+}
+.bar > span { display: block; height: 100%; border-radius: 99px; }
+
+.table-wrap { overflow: auto; }
+table { width: 100%; border-collapse: collapse; font-size: 14px; }
+th, td { text-align: left; padding: 10px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { color: var(--muted); font-size: 12px; font-weight: 600; }
+td.num { text-align: right; }
+.empty { color: var(--muted); padding: 18px 0; }
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+}
+.dot { width: 8px; height: 8px; border-radius: 50%; background: #8b95a3; }
+
+@media (max-width: 860px) {
+  .top { flex-direction: column; }
+  .kpis { grid-template-columns: 1fr; }
+  .stage { grid-template-columns: 1fr 1fr; }
+}
