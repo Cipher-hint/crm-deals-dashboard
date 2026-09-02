@@ -7,6 +7,13 @@ const PORT = Number(process.env.PORT) || 3000;
 const VIBE_API_KEY = process.env.VIBE_API_KEY || "";
 const VIBE_API = "https://vibecode.bitrix24.tech/v1";
 const MOSCOW_OFFSET = "+03:00";
+const APP_META = {
+  name: "Дашборд сделок CRM",
+  version: require("./package.json").version,
+  vendor: "safekit.tech",
+  support: "support@safekit.tech",
+  site: "https://safekit.tech",
+};
 
 const app = express();
 app.disable("x-powered-by");
@@ -14,7 +21,17 @@ app.use(express.json({ limit: "32kb" }));
 app.use(express.static(path.join(__dirname, "public")));
 
 app.get("/health", (_req, res) => {
-  res.json({ ok: true });
+  res.json({ ok: true, version: APP_META.version });
+});
+
+app.get("/api/meta", (_req, res) => {
+  res.json({
+    success: true,
+    data: {
+      ...APP_META,
+      footer: `${APP_META.name} v${APP_META.version}  |  Разработчик: ${APP_META.vendor}  |  Поддержка: ${APP_META.support}`,
+    },
+  });
 });
 
 app.get("/api/dashboard", async (req, res) => {

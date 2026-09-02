@@ -33,6 +33,71 @@ document.querySelectorAll("[data-preset]").forEach((button) => {
 
 applyPreset("30");
 loadDashboard();
+initChrome();
+
+function initChrome() {
+  document.querySelectorAll(".tab").forEach((button) => {
+    button.addEventListener("click", () => showView(button.dataset.view));
+  });
+  document.getElementById("copy-support")?.addEventListener("click", copySupportDump);
+  loadMeta();
+  if (location.hash.startsWith("#h-")) showView("help");
+}
+
+function showView(view) {
+  document.querySelectorAll(".tab").forEach((button) => {
+    button.classList.toggle("is-active", button.dataset.view === view);
+  });
+  document.querySelectorAll("[data-panel]").forEach((panel) => {
+    panel.hidden = panel.dataset.panel !== view;
+  });
+}
+
+async function loadMeta() {
+  try {
+    const response = await fetch("/api/meta");
+    const payload = await response.json();
+    if (!payload.success) return;
+    const footer = document.getElementById("app-footer");
+    if (footer && payload.data.footer) footer.innerHTML = formatFooter(payload.data);
+  } catch {
+    /* keep static footer */
+  }
+}
+
+function formatFooter(meta) {
+  return `${escapeHtml(meta.name)} v${escapeHtml(meta.version)}&nbsp;&nbsp;|&nbsp;&nbsp;Разработчик: <a href="${escapeHtml(meta.site)}" target="_top" rel="noopener">${escapeHtml(meta.vendor)}</a>&nbsp;&nbsp;|&nbsp;&nbsp;Поддержка: <a href="mailto:${escapeHtml(meta.support)}">${escapeHtml(meta.support)}</a>`;
+}
+
+async function copySupportDump() {
+  const hint = document.getElementById("copy-hint");
+  let meta = {};
+  try {
+    const payload = await (await fetch("/api/meta")).json();
+    meta = payload.data || {};
+  } catch {
+    meta = { version: "unknown" };
+  }
+  const dump = [
+    "Приложение: Дашборд сделок CRM",
+    `Версия: ${meta.version || "1.1.0"}`,
+    `Разработчик: ${meta.vendor || "safekit.tech"}`,
+    `Адрес: ${location.href}`,
+    `User-Agent: ${navigator.userAgent}`,
+    `Время: ${new Date().toISOString()}`,
+    `Экран: ${window.innerWidth}x${window.innerHeight}`,
+    "В дамп не входят сделки и персональные данные клиентов.",
+  ].join("\n");
+  try {
+    await navigator.clipboard.writeText(dump);
+    if (hint) {
+      hint.hidden = false;
+      setTimeout(() => { hint.hidden = true; }, 2500);
+    }
+  } catch {
+    window.prompt("Скопируйте текст для поддержки:", dump);
+  }
+}
 
 function applyPreset(preset) {
   const today = new Date();
