@@ -15,6 +15,7 @@
 
 - URL: https://app-bfeac934a09d.vibecode.bitrix24.tech
 - Встраивание: пункт левого меню Битрикс24 **Дашборд сделок** (`LEFT_MENU`)
+- Исходный код: https://github.com/Cipher-hint/crm-deals-dashboard
 
 ## Локальный запуск
 
