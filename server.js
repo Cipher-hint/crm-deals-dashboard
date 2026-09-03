@@ -14,6 +14,8 @@ const APP_META = {
   support: "support@safekit.tech",
   site: "https://safekit.tech",
 };
+const MAX_RETRIES = 3;
+const RETRYABLE_ITEM = /RATE_LIMITED|QUEUE_OVERFLOW|QUEUE_TIMEOUT|OPERATION_TIME_LIMIT|TIMEOUT_QUARANTINE|BITRIX_TIMEOUT|AUTO_PAGINATION_FAILED/;
 
 const app = express();
 app.disable("x-powered-by");
@@ -39,7 +41,7 @@ app.get("/api/dashboard", async (req, res) => {
     if (!VIBE_API_KEY) {
       return res.status(500).json({
         success: false,
-        error: { code: "MISSING_VIBE_API_KEY", message: "Сервер запущен без VIBE_API_KEY." },
+        error: { code: "MISSING_VIBE_API_KEY", message: "Сервер запущен без ключа доступа к API." },
       });
     }
 
@@ -49,7 +51,7 @@ app.get("/api/dashboard", async (req, res) => {
     }
 
     const createdFilter = createdAtFilter(period.from, period.to);
-    const [funnelRes, openRes, wonRes, allPeriodRes, recentRes, dictionaries] = await Promise.all([
+    const [funnelRes, openRes, wonRes, firstBatch, viewerRes] = await Promise.all([
       vibe("POST", "/deals/aggregate", {
         aggregate: [
           { field: "*", function: "count" },
@@ -72,49 +74,101 @@ app.get("/api/dashboard", async (req, res) => {
         ],
         filter: { ...createdFilter, stageSemanticId: "S" },
       }),
-      vibe("POST", "/deals/aggregate", {
-        aggregate: [
-          { field: "*", function: "count" },
-          { field: "amount", function: "sum" },
-        ],
-        filter: createdFilter,
-      }),
-      vibe("POST", "/deals/search", {
-        select: [
-          "id",
-          "title",
-          "amount",
-          "currency",
-          "stageId",
-          "stageSemanticId",
-          "assignedById",
-          "createdAt",
-          "closed",
-          "closedAt",
-          "categoryId",
-        ],
-        filter: createdFilter,
-        order: { createdAt: "DESC" },
-        limit: 20,
-        withTotal: false,
-      }),
-      loadDictionaries(),
+      vibeBatch([
+        {
+          id: "recent",
+          entity: "deals",
+          action: "search",
+          params: {
+            select: [
+              "id",
+              "title",
+              "amount",
+              "currency",
+              "stageId",
+              "stageSemanticId",
+              "assignedById",
+              "createdAt",
+              "closed",
+              "closedAt",
+              "categoryId",
+            ],
+            filter: createdFilter,
+            sort: { createdAt: "DESC" },
+            limit: 20,
+            withTotal: false,
+            start: -1,
+          },
+        },
+        {
+          id: "users",
+          entity: "users",
+          action: "search",
+          params: {
+            select: ["id", "name", "lastName", "active"],
+            limit: 200,
+            withTotal: false,
+            start: -1,
+          },
+        },
+        {
+          id: "categories",
+          entity: "deal-categories",
+          action: "list",
+          params: { limit: 50, withTotal: false, start: -1 },
+        },
+      ]),
+      vibe("GET", "/users/me").catch(() => ({ data: null })),
     ]);
+
+    requireBatchSuccess(firstBatch, ["recent"]);
+
+    const categories = (firstBatch.results.categories || [])
+      .map((item) => ({ id: Number(item.id), name: item.name }))
+      .filter((item) => Number.isFinite(item.id));
+    const extraFunnels = categories.filter((item) => item.id > 0);
+    const statusCalls = [
+      {
+        id: "st_default",
+        entity: "statuses",
+        action: "search",
+        params: { filter: { entityId: "DEAL_STAGE" }, limit: 100, withTotal: false, start: -1 },
+      },
+      ...extraFunnels.map((item) => ({
+        id: `st_${item.id}`,
+        entity: "statuses",
+        action: "search",
+        params: { filter: { entityId: `DEAL_STAGE_${item.id}` }, limit: 100, withTotal: false, start: -1 },
+      })),
+    ];
+    const statusBatch = await vibeBatch(statusCalls);
+
+    const dictionaries = buildDictionaries({
+      viewer: viewerRes.data,
+      categories,
+      users: firstBatch.results.users || [],
+      statusLists: statusCalls.map((call) => statusBatch.results[call.id] || []),
+    });
 
     const funnelAgg = funnelRes.data || {};
     const openAgg = openRes.data || {};
     const wonAgg = wonRes.data || {};
-    const allPeriodAgg = allPeriodRes.data || {};
     const stages = mapFunnel(funnelAgg, dictionaries);
-    const openAmount = Number(openAgg.aggregates?.amount?.sum || 0);
-    const openCount = Number(openAgg.count || 0);
+    const periodCount = stages.reduce((sum, stage) => sum + stage.count, 0);
+    const periodAmount = stages.reduce((sum, stage) => sum + stage.amount, 0);
     const wonCount = Number(wonAgg.count || 0);
     const wonAmount = Number(wonAgg.aggregates?.amount?.sum || 0);
-    const periodCount = Number(allPeriodAgg.count || 0);
-    const periodAmount = Number(allPeriodAgg.aggregates?.amount?.sum || 0);
-    const averageCheck = wonCount > 0 ? wonAmount / wonCount : periodCount > 0 ? periodAmount / periodCount : 0;
+    const kpis = {
+      openAmount: Number(openAgg.aggregates?.amount?.sum || 0),
+      openCount: Number(openAgg.count || 0),
+      wonCount,
+      wonAmount,
+      averageCheck: wonCount > 0 ? wonAmount / wonCount : periodCount > 0 ? periodAmount / periodCount : 0,
+      periodCount,
+      periodAmount,
+    };
 
-    const recentDeals = (recentRes.data || []).map((deal) => ({
+    const recentDeals = (firstBatch.results.recent || []).map((deal) => ({
       id: deal.id,
       title: deal.title || "Без названия",
       amount: Number(deal.amount || 0),
@@ -137,16 +191,7 @@ app.get("/api/dashboard", async (req, res) => {
           to: period.to,
           label: period.label,
         },
-        kpis: {
-          openAmount,
-          openCount,
-          wonCount,
-          wonAmount,
-          averageCheck,
-          periodCount,
-          periodAmount,
-          currency: "RUB",
-        },
+        kpis: { ...kpis, currency: "RUB" },
         funnel: {
           stages,
           truncated: Boolean(funnelAgg.meta?.truncated),
@@ -156,13 +201,10 @@ app.get("/api/dashboard", async (req, res) => {
       },
     });
   } catch (err) {
-    const status = Number(err.status) || 502;
-    res.status(status).json({
+    const mapped = mapPublicError(err);
+    res.status(mapped.status).json({
       success: false,
-      error: {
-        code: err.code || "DASHBOARD_FAILED",
-        message: err.message || "Не удалось загрузить данные CRM.",
-      },
+      error: { code: mapped.code, message: mapped.message },
     });
   }
 });
@@ -218,35 +260,10 @@ function createdAtFilter(from, to) {
   return filter;
 }
 
-async function loadDictionaries() {
-  const [viewerRes, categoriesRes, usersRes] = await Promise.all([
-    vibe("GET", "/users/me"),
-    vibe("GET", "/deal-categories?limit=50&withTotal=false"),
-    vibe("POST", "/users/search", {
-      select: ["id", "name", "lastName", "active"],
-      limit: 200,
-      withTotal: false,
-    }),
-  ]);
-
-  const categories = (categoriesRes.data || []).map((item) => ({
-    id: Number(item.id),
-    name: item.name,
-  }));
-  const entityIds = ["DEAL_STAGE", ...categories.map((item) => `DEAL_STAGE_${item.id}`)];
-  const stageLists = await Promise.all(
-    entityIds.map((entityId) =>
-      vibe("POST", "/statuses/search", {
-        filter: { entityId },
-        limit: 100,
-        withTotal: false,
-      }).catch(() => ({ success: false, data: [] }))
-    )
-  );
-
+function buildDictionaries({ viewer, categories, users, statusLists }) {
   const stagesById = new Map();
-  for (const list of stageLists) {
-    for (const stage of list.data || []) {
+  for (const list of statusLists) {
+    for (const stage of list || []) {
       stagesById.set(String(stage.statusId), {
         id: String(stage.statusId),
         name: stage.name || String(stage.statusId),
@@ -259,7 +276,7 @@ async function loadDictionaries() {
   }
 
   const usersById = new Map();
-  for (const user of usersRes.data || []) {
+  for (const user of users) {
     const fullName = [user.name, user.lastName].filter(Boolean).join(" ").replace(/\s+/g, " ").trim();
     usersById.set(Number(user.id), fullName || `ID ${user.id}`);
   }
@@ -271,10 +288,10 @@ async function loadDictionaries() {
   };
 
   return {
-    viewer: viewerRes.data
+    viewer: viewer
       ? {
-          id: viewerRes.data.id,
-          name: [viewerRes.data.name, viewerRes.data.lastName].filter(Boolean).join(" ").replace(/\s+/g, " ").trim(),
+          id: viewer.id,
+          name: [viewer.name, viewer.lastName].filter(Boolean).join(" ").replace(/\s+/g, " ").trim(),
         }
       : null,
     categories: [{ id: 0, name: "Общая воронка" }, ...categories],
@@ -331,38 +348,201 @@ function mapFunnel(funnelAgg, dictionaries) {
     .sort((a, b) => a.categoryId - b.categoryId || a.sort - b.sort || a.name.localeCompare(b.name, "ru"));
 }
 
-async function vibe(method, pathname, body) {
-  let response;
+function requireBatchSuccess(batch, requiredIds) {
+  const errors = batch.errors || {};
+  const results = batch.results || {};
+  for (const id of requiredIds) {
+    if (errors[id] || !Object.prototype.hasOwnProperty.call(results, id)) {
+      const item = errors[id] || {
+        code: "BATCH_ITEM_FAILED",
+        message: "Пакетный запрос не вернул обязательные данные.",
+      };
+      const err = new Error(item.message || "Ошибка пакетного запроса.");
+      err.code = item.code || "BATCH_ITEM_FAILED";
+      err.status = guessStatusFromCode(item.code);
+      throw err;
+    }
+  }
+}
+
+function guessStatusFromCode(code) {
+  const text = String(code || "");
+  if (/401|UNAUTHORIZED|INVALID_API_KEY|MISSING_API_KEY|INVALID_SESSION/.test(text)) return 401;
+  if (/403|FORBIDDEN|ACCESS_DENIED|WRITE_BLOCKED/.test(text)) return 403;
+  if (/429|RATE_LIMIT|QUEUE_OVERFLOW|QUEUE_TIMEOUT/.test(text)) return 429;
+  return 502;
+}
+
+function mapPublicError(err) {
+  const status = Number(err.status) || 502;
+  const code = err.code || "DASHBOARD_FAILED";
+  if (status === 401 || /INVALID_API_KEY|MISSING_API_KEY|UNAUTHORIZED|INVALID_SESSION/.test(code)) {
+    return { status: 401, code: "UNAUTHORIZED", message: "Нет доступа: ключ недействителен или сессия истекла." };
+  }
+  if (status === 403 || /ACCESS_DENIED|FORBIDDEN|WRITE_BLOCKED|SCOPE_NOT_ALLOWED|MANAGEMENT_KEY/.test(code)) {
+    return { status: 403, code: "FORBIDDEN", message: "Недостаточно прав для чтения CRM. Нужны скоупы crm и user." };
+  }
+  if (status === 429 || /RATE_LIMIT|QUEUE_OVERFLOW|QUEUE_TIMEOUT/.test(code)) {
+    return { status: 429, code: "RATE_LIMITED", message: "Превышен лимит запросов к API. Подождите несколько секунд и обновите страницу." };
+  }
+  if (status === 502 || status === 503 || /UNAVAILABLE|NETWORK|VIBE_HTTP_ERROR|VIBE_NETWORK|BITRIX_TIMEOUT/.test(code)) {
+    return { status: 502, code: "UPSTREAM_UNAVAILABLE", message: "Портал Битрикс24 или Вайбкод временно недоступен. Повторите попытку." };
+  }
+  if (status >= 400 && status < 500) {
+    return { status, code, message: err.message || "Не удалось загрузить данные CRM." };
+  }
+  return { status: 502, code: "UPSTREAM_UNAVAILABLE", message: "Не удалось загрузить данные CRM. Повторите попытку." };
+}
+
+async function vibeBatch(calls) {
   try {
-    response = await fetch(`${VIBE_API}${pathname}`, {
-      method,
-      headers: {
-        "X-Api-Key": VIBE_API_KEY,
-        Accept: "application/json",
-        ...(body ? { "Content-Type": "application/json" } : {}),
-      },
-      body: body ? JSON.stringify(body) : undefined,
-    });
+    return await vibeBatchOnce(calls);
   } catch (err) {
-    const error = new Error(err.cause?.message || err.message || "fetch failed");
-    error.code = "VIBE_NETWORK_ERROR";
-    error.status = 502;
-    throw error;
+    if (err.status === 403 || err.code === "MANAGEMENT_KEY_NO_ENTITY_ACCESS") {
+      return serialBatch(calls);
+    }
+    throw err;
   }
+}
 
-  let payload = null;
-  try {
-    payload = await response.json();
-  } catch {
-    payload = null;
+async function vibeBatchOnce(calls) {
+  const pending = calls.slice();
+  const results = {};
+  const errors = {};
+  for (let attempt = 0; attempt <= MAX_RETRIES && pending.length; attempt += 1) {
+    const payload = await vibe("POST", "/batch", { calls: pending });
+    const batchResults = payload.data?.results || {};
+    const batchErrors = payload.data?.errors || {};
+    const retry = [];
+    let waitSec = 0;
+    for (const call of pending) {
+      if (!batchErrors[call.id]) {
+        results[call.id] = batchResults[call.id];
+        continue;
+      }
+      const itemErr = batchErrors[call.id];
+      if (RETRYABLE_ITEM.test(itemErr.code || "") && attempt < MAX_RETRIES) {
+        retry.push(call);
+        waitSec = Math.max(waitSec, Number(itemErr.retryAfter) || 0);
+      } else {
+        errors[call.id] = itemErr;
+      }
+    }
+    pending.length = 0;
+    if (retry.length) {
+      await sleep(waitSec > 0 ? Math.min(waitSec * 1000, 30000) : retryDelayMs(null, null, attempt));
+      pending.push(...retry);
+    }
   }
-
-  if (!response.ok || (payload && payload.success === false)) {
-    const error = new Error(payload?.error?.message || `Vibe API ${response.status}`);
-    error.code = payload?.error?.code || "VIBE_HTTP_ERROR";
-    error.status = response.status;
-    throw error;
+  for (const call of pending) {
+    errors[call.id] = {
+      code: "RATE_LIMITED",
+      message: "Превышен лимит запросов к API. Подождите несколько секунд и обновите страницу.",
+    };
   }
+  return { results, errors };
+}
 
-  return payload || { success: true, data: null };
+async function serialBatch(calls) {
+  const results = {};
+  const errors = {};
+  for (const call of calls) {
+    try {
+      results[call.id] = await vibeCall(call);
+    } catch (err) {
+      errors[call.id] = { code: err.code || "CALL_FAILED", message: err.message };
+    }
+  }
+  return { results, errors };
+}
+
+async function vibeCall(call) {
+  if (call.action === "search") {
+    const payload = await vibe("POST", `/${call.entity}/search`, call.params);
+    return payload.data;
+  }
+  if (call.action === "list") {
+    const params = call.params || {};
+    const query = new URLSearchParams();
+    if (params.limit != null) query.set("limit", String(params.limit));
+    if (params.withTotal != null) query.set("withTotal", String(params.withTotal));
+    if (params.start != null) query.set("start", String(params.start));
+    const suffix = query.toString() ? `?${query}` : "";
+    const payload = await vibe("GET", `/${call.entity}${suffix}`);
+    return payload.data;
+  }
+  throw Object.assign(new Error(`Неподдерживаемое действие ${call.action}`), { code: "ACTION_NOT_SUPPORTED", status: 400 });
+}
+
+async function vibe(method, pathname, body) {
+  let lastError = null;
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt += 1) {
+    let response;
+    try {
+      response = await fetch(`${VIBE_API}${pathname}`, {
+        method,
+        headers: {
+          "X-Api-Key": VIBE_API_KEY,
+          Accept: "application/json",
+          ...(body ? { "Content-Type": "application/json" } : {}),
+        },
+        body: body ? JSON.stringify(body) : undefined,
+      });
+    } catch (err) {
+      lastError = Object.assign(new Error(err.cause?.message || err.message || "fetch failed"), {
+        code: "VIBE_NETWORK_ERROR",
+        status: 502,
+      });
+      if (attempt < MAX_RETRIES) {
+        await sleep(retryDelayMs(null, null, attempt));
+        continue;
+      }
+      throw lastError;
+    }
+
+    let payload = null;
+    try {
+      payload = await response.json();
+    } catch {
+      payload = null;
+    }
+
+    if (shouldRetryHttp(response.status, payload?.error?.code) && attempt < MAX_RETRIES) {
+      await sleep(retryDelayMs(response, payload?.error?.retryAfter, attempt));
+      continue;
+    }
+
+    if (!response.ok || (payload && payload.success === false)) {
+      const error = new Error(payload?.error?.message || `Vibe API ${response.status}`);
+      error.code = payload?.error?.code || "VIBE_HTTP_ERROR";
+      error.status = response.status;
+      throw error;
+    }
+
+    return payload || { success: true, data: null };
+  }
+  throw lastError || new Error("Vibe API failed");
+}
+
+function shouldRetryHttp(status, code) {
+  if (status === 401 || status === 403) return false;
+  if (status === 429 || status === 502 || status === 503) return true;
+  return /RATE_LIMITED|QUEUE_OVERFLOW|QUEUE_TIMEOUT|BITRIX_TIMEOUT|BITRIX_UNAVAILABLE|VIBE_NETWORK/.test(String(code || ""));
+}
+
+function retryDelayMs(response, retryAfter, attempt) {
+  const header = Number(response?.headers?.get("retry-after"));
+  const fromBody = Number(retryAfter);
+  const seconds = Number.isFinite(header) && header >= 0
+    ? header
+    : Number.isFinite(fromBody) && fromBody >= 0
+      ? fromBody
+      : null;
+  const base = seconds != null ? Math.min(seconds * 1000, 30000) : Math.min(1000 * 2 ** attempt, 8000);
+  const jitter = base * (0.85 + Math.random() * 0.3);
+  return Math.round(jitter);
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }

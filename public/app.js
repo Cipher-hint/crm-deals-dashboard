@@ -80,7 +80,7 @@ async function copySupportDump() {
   }
   const dump = [
     "Приложение: Дашборд сделок CRM",
-    `Версия: ${meta.version || "1.1.0"}`,
+    `Версия: ${meta.version || "1.1.1"}`,
     `Разработчик: ${meta.vendor || "safekit.tech"}`,
     `Адрес: ${location.href}`,
     `User-Agent: ${navigator.userAgent}`,
@@ -144,9 +144,14 @@ async function loadDashboard() {
 
   try {
     const response = await fetch(`/api/dashboard?${params.toString()}`);
-    const payload = await response.json();
-    if (!response.ok || !payload.success) {
-      throw new Error(payload.error?.message || "Не удалось получить данные.");
+    let payload = null;
+    try {
+      payload = await response.json();
+    } catch {
+      payload = null;
+    }
+    if (!response.ok || !payload?.success) {
+      throw new Error(messageFromFailure(response.status, payload));
     }
     render(payload.data);
   } catch (error) {
@@ -219,6 +224,15 @@ function skeletonKpis() {
 function showError(message) {
   statusEl.hidden = !message;
   statusEl.textContent = message;
+}
+
+function messageFromFailure(status, payload) {
+  if (payload?.error?.message) return payload.error.message;
+  if (status === 401) return "Нет доступа: ключ недействителен или сессия истекла.";
+  if (status === 403) return "Недостаточно прав для чтения CRM. Нужны скоупы crm и user.";
+  if (status === 429) return "Превышен лимит запросов к API. Подождите несколько секунд и обновите страницу.";
+  if (status === 502 || status === 503) return "Портал Битрикс24 или Вайбкод временно недоступен. Повторите попытку.";
+  return "Не удалось получить данные.";
 }
 
 function isoDate(date) {

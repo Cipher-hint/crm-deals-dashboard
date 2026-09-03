@@ -15,7 +15,7 @@
 
 - URL: https://app-bfeac934a09d.vibecode.bitrix24.tech
 - Встраивание: пункт левого меню Битрикс24 **Дашборд сделок** (`LEFT_MENU`)
-- Версия: 1.1.0 · разработчик [safekit.tech](https://safekit.tech) · поддержка support@safekit.tech
+- Версия: 1.1.1 · разработчик [safekit.tech](https://safekit.tech) · поддержка support@safekit.tech
 - Исходный код: https://github.com/Cipher-hint/crm-deals-dashboard
 
 ## Локальный запуск
@@ -34,6 +34,9 @@ npm start
 1. Создайте galaxy-приложение: `POST /v1/infra/servers` с `name`, `source`, `runtime: node20`, `start: node server.js`.
 2. Передайте ключ только в `env.VIBE_API_KEY` — не кладите его в архив.
 3. Зарегистрируйте OAuth-приложение со скоупами `crm`, `user`, `placement` и опубликуйте с местом `LEFT_MENU`.
+4. На каждый деплой передайте полный `env` заново (платформа не хранит секреты между выкладками).
+
+История изменений: [CHANGELOG.md](CHANGELOG.md).
 
 ## Материалы для проверки
 
