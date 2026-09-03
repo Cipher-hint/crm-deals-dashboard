@@ -8,3 +8,4 @@ build/
 *.tgz
 secrets/
 .vibe-app-key
+SAFEKIT_AI_APP_RULES.md
