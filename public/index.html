@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Дашборд сделок CRM — SafeKit</title>
   <link rel="icon" href="/_gw/icon" />
-  <link rel="stylesheet" href="/styles.css?v=1.2.0" />
+  <link rel="stylesheet" href="/styles.css?v=1.2.1" />
 </head>
 <body>
   <header class="brand-bar">
@@ -119,7 +119,7 @@
       <ol>
         <li>В левом меню Битрикс24 откройте пункт <strong>Дашборд сделок</strong>.</li>
         <li>Если пункта нет — откройте каталог приложений портала и карточку <strong>Дашборд сделок CRM</strong>.</li>
-        <li>Прямая ссылка: <a href="https://app-bfeac934a09d.vibecode.bitrix24.tech" target="_top" rel="noopener">https://app-bfeac934a09d.vibecode.bitrix24.tech</a>. Снаружи это защищённый сервер Вайбкод: сначала вход через Bitrix24.</li>
+        <li>Прямая ссылка: <a href="https://app-61d893d00845.vibecode.bitrix24.tech" target="_top" rel="noopener">https://app-61d893d00845.vibecode.bitrix24.tech</a>. Снаружи это защищённый сервер Вайбкод: сначала вход через Bitrix24.</li>
       </ol>
     </section>
 
@@ -134,7 +134,7 @@
 
     <section id="h-funnel">
       <h2>Сводка по стадиям воронки</h2>
-      <p>Строки — текущие стадии сделок, созданных в выбранном периоде. Для каждой стадии: человекочитаемое название, код <code>stageId</code>, воронка (категория), количество и сумма в валюте сделки. На портале несколько воронок (квалификация, лицензия, продление, услуги) — они идут одним списком с подписью воронки. Полоска справа пропорциональна сумме стадии в выборке, не общему объёму CRM. Если API усекло агрегат (больше 5000 записей), над таблицей появляется предупреждение.</p>
+      <p>Строки — текущие стадии сделок, созданных в выбранном периоде. Для каждой стадии: человекочитаемое название, код <code>stageId</code>, воронка (категория), количество и сумма. Агрегат CRM группирует только по стадии: поле <code>currency</code> в <code>groupBy</code> недоступно, поэтому KPI не режутся по валютам. Код валюты для оформления сумм берётся из последних сделок. На портале несколько воронок (квалификация, лицензия, продление, услуги) — они идут одним списком с подписью воронки. Полоска справа пропорциональна сумме стадии в выборке, не общему объёму CRM. Если API усекло агрегат (больше 5000 записей), над таблицей появляется предупреждение.</p>
     </section>
 
     <section id="h-period">
@@ -187,7 +187,7 @@
       <p>Заявка для ИТ/ИБ (можно скопировать):</p>
       <pre>Прошу разрешить HTTPS (443) для работоспособности приложения «Дашборд сделок CRM» на портале Битрикс24:
 
-  Domain — app-bfeac934a09d.vibecode.bitrix24.tech
+  Domain — app-61d893d00845.vibecode.bitrix24.tech
            vibecode.bitrix24.tech
            oauth.bitrix.info
   Ports  — 443
@@ -210,8 +210,8 @@ WebSocket и длинные пуллы не используются — кор�
   </div>
 
   <footer class="app-footer" id="app-footer">
-    Дашборд сделок CRM v1.2.0&nbsp;&nbsp;|&nbsp;&nbsp;Разработчик: <a href="https://safekit.tech" target="_top" rel="noopener">safekit.tech</a>&nbsp;&nbsp;|&nbsp;&nbsp;Поддержка: <a href="mailto:support@safekit.tech">support@safekit.tech</a>
+    Дашборд сделок CRM v1.2.1&nbsp;&nbsp;|&nbsp;&nbsp;Разработчик: <a href="https://safekit.tech" target="_top" rel="noopener">safekit.tech</a>&nbsp;&nbsp;|&nbsp;&nbsp;Поддержка: <a href="mailto:support@safekit.tech">support@safekit.tech</a>
   </footer>
-  <script src="/app.js?v=1.2.0"></script>
+  <script src="/app.js?v=1.2.1"></script>
 </body>
 </html>

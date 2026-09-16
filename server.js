@@ -59,17 +59,15 @@ app.get("/api/dashboard", async (req, res) => {
     const [funnelRes, openRes, wonRes, firstBatch, viewerRes] = await Promise.all([
       vibe(session, "POST", "/deals/aggregate", {
         aggregate,
-        groupBy: ["stageId", "currency"],
+        groupBy: ["stageId"],
         filter: createdFilter,
       }),
       vibe(session, "POST", "/deals/aggregate", {
         aggregate,
-        groupBy: ["currency"],
         filter: { ...createdFilter, closed: false },
       }),
       vibe(session, "POST", "/deals/aggregate", {
         aggregate,
-        groupBy: ["currency"],
         filter: { ...createdFilter, stageSemanticId: "S" },
       }),
       vibeBatch(session, [
@@ -158,8 +156,9 @@ app.get("/api/dashboard", async (req, res) => {
     const funnelAgg = funnelRes.data || {};
     const openAgg = openRes.data || {};
     const wonAgg = wonRes.data || {};
-    const stages = mapFunnel(funnelAgg, dictionaries);
-    const kpis = kpisFromCurrencyGroups(openAgg.groups || [], wonAgg.groups || [], stages);
+    const currency = inferCurrency(recentRows);
+    const stages = mapFunnel(funnelAgg, dictionaries, currency);
+    const kpis = kpisFromTotals(asGroups(openAgg), asGroups(wonAgg), stages, currency);
     const truncated = isTruncated(funnelAgg, openAgg, wonAgg);
 
     const recentDeals = recentRows.map((deal) => ({
@@ -339,10 +338,39 @@ function guessCategory(stageId) {
   return match ? Number(match[1]) : 0;
 }
 
-function mapFunnel(funnelAgg, dictionaries) {
-  const groups = funnelAgg?.groups || [];
+function asGroups(agg) {
+  const groups = agg?.groups;
+  if (Array.isArray(groups) && groups.length) return groups;
+  if (!agg) return [];
+  if (agg.aggregates || agg.count != null) {
+    return [{ count: agg.count || 0, aggregates: agg.aggregates || {} }];
+  }
+  return [];
+}
+
+function inferCurrency(deals) {
+  const counts = new Map();
+  for (const deal of deals || []) {
+    const code = String(deal.currency || "").trim().toUpperCase();
+    if (!code) continue;
+    counts.set(code, (counts.get(code) || 0) + 1);
+  }
+  let best = "RUB";
+  let n = 0;
+  for (const [code, count] of counts) {
+    if (count > n) {
+      best = code;
+      n = count;
+    }
+  }
+  return best;
+}
+
+function mapFunnel(funnelAgg, dictionaries, currency) {
+  const groups = asGroups(funnelAgg);
   const maxAmount = Math.max(0, ...groups.map((group) => Number(group.aggregates?.amount?.sum || 0)));
   const maxCount = Math.max(0, ...groups.map((group) => Number(group.count || 0)));
+  const code = currency || "RUB";
 
   return groups
     .map((group) => {
@@ -350,7 +378,7 @@ function mapFunnel(funnelAgg, dictionaries) {
       const count = Number(group.count || 0);
       const amount = Number(group.aggregates?.amount?.sum || 0);
       return {
-        stageId: String(group.stageId),
+        stageId: String(group.stageId || ""),
         name: meta.name,
         color: meta.color,
         semantics: meta.semantics,
@@ -359,7 +387,7 @@ function mapFunnel(funnelAgg, dictionaries) {
         sort: meta.sort,
         count,
         amount,
-        currency: group.currency || "RUB",
+        currency: code,
         truncated: Boolean(group.truncated || group.aggregates?.amount?.truncated),
         countShare: maxCount ? count / maxCount : 0,
         amountShare: maxAmount ? amount / maxAmount : 0,
@@ -368,59 +396,49 @@ function mapFunnel(funnelAgg, dictionaries) {
     .sort((a, b) => a.categoryId - b.categoryId || a.sort - b.sort || a.name.localeCompare(b.name, "ru"));
 }
 
-function kpisFromCurrencyGroups(openGroups, wonGroups, stages) {
-  const byCurrency = new Map();
-  const ensure = (code) => {
-    const currency = code || "RUB";
-    if (!byCurrency.has(currency)) {
-      byCurrency.set(currency, {
-        currency,
-        openAmount: 0,
-        openCount: 0,
-        wonCount: 0,
-        wonAmount: 0,
-        periodCount: 0,
-        periodAmount: 0,
-      });
-    }
-    return byCurrency.get(currency);
-  };
+function kpisFromTotals(openGroups, wonGroups, stages, currency) {
+  const code = currency || "RUB";
+  let openAmount = 0;
+  let openCount = 0;
+  let wonCount = 0;
+  let wonAmount = 0;
+  let periodCount = 0;
+  let periodAmount = 0;
 
   for (const group of openGroups) {
-    const row = ensure(group.currency);
-    row.openCount += Number(group.count || 0);
-    row.openAmount += Number(group.aggregates?.amount?.sum || 0);
+    openCount += Number(group.count || 0);
+    openAmount += Number(group.aggregates?.amount?.sum || 0);
   }
   for (const group of wonGroups) {
-    const row = ensure(group.currency);
-    row.wonCount += Number(group.count || 0);
-    row.wonAmount += Number(group.aggregates?.amount?.sum || 0);
+    wonCount += Number(group.count || 0);
+    wonAmount += Number(group.aggregates?.amount?.sum || 0);
   }
   for (const stage of stages) {
-    const row = ensure(stage.currency);
-    row.periodCount += Number(stage.count || 0);
-    row.periodAmount += Number(stage.amount || 0);
+    periodCount += Number(stage.count || 0);
+    periodAmount += Number(stage.amount || 0);
   }
 
-  const rows = [...byCurrency.values()].map((row) => ({
-    ...row,
-    averageCheck: row.wonCount > 0 ? row.wonAmount / row.wonCount : row.periodCount > 0 ? row.periodAmount / row.periodCount : 0,
-  }));
-  rows.sort((a, b) => b.periodAmount - a.periodAmount || a.currency.localeCompare(b.currency));
-  const primary = rows[0] || {
-    currency: "RUB",
-    openAmount: 0,
-    openCount: 0,
-    wonCount: 0,
-    wonAmount: 0,
-    averageCheck: 0,
-    periodCount: 0,
-    periodAmount: 0,
-  };
   return {
-    ...primary,
-    currencies: rows.map((row) => row.currency),
-    byCurrency: rows,
+    currency: code,
+    openAmount,
+    openCount,
+    wonCount,
+    wonAmount,
+    averageCheck: wonCount > 0 ? wonAmount / wonCount : periodCount > 0 ? periodAmount / periodCount : 0,
+    periodCount,
+    periodAmount,
+    currencies: [code],
+    byCurrency: [
+      {
+        currency: code,
+        openAmount,
+        openCount,
+        wonCount,
+        wonAmount,
+        periodCount,
+        periodAmount,
+      },
+    ],
   };
 }
 
