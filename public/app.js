@@ -1,14 +1,10 @@
-const money = new Intl.NumberFormat("ru-RU", {
-  style: "currency",
-  currency: "RUB",
-  maximumFractionDigits: 0,
-});
 const numberFmt = new Intl.NumberFormat("ru-RU");
 const dateFmt = new Intl.DateTimeFormat("ru-RU", {
   day: "2-digit",
   month: "2-digit",
   year: "numeric",
 });
+const moneyCache = new Map();
 
 const fromInput = document.getElementById("from");
 const toInput = document.getElementById("to");
@@ -80,7 +76,7 @@ async function copySupportDump() {
   }
   const dump = [
     "Приложение: Дашборд сделок CRM",
-    `Версия: ${meta.version || "1.1.1"}`,
+    `Версия: ${meta.version || "1.2.0"}`,
     `Разработчик: ${meta.vendor || "safekit.tech"}`,
     `Адрес: ${location.href}`,
     `User-Agent: ${navigator.userAgent}`,
@@ -156,6 +152,8 @@ async function loadDashboard() {
     render(payload.data);
   } catch (error) {
     showError(error.message || "Ошибка загрузки дашборда.");
+    const truncatedEl = document.getElementById("truncated");
+    if (truncatedEl) truncatedEl.hidden = true;
     funnelEl.innerHTML = "";
     recentEl.innerHTML = "";
     kpisEl.innerHTML = "";
@@ -169,11 +167,17 @@ function render(data) {
     : "Период: все время";
   subtitleEl.textContent = [periodLabel, viewer].filter(Boolean).join(" · ");
 
+  const truncatedEl = document.getElementById("truncated");
+  if (truncatedEl) truncatedEl.hidden = !data.funnel?.truncated;
+
   const kpis = data.kpis;
+  const currency = kpis.currency || "RUB";
+  const extra = (kpis.currencies || []).filter((code) => code !== currency);
+  const extraHint = extra.length ? ` · также ${extra.join(", ")}` : "";
   kpisEl.innerHTML = [
-    kpiCard("Сумма открытых сделок", money.format(kpis.openAmount), `${numberFmt.format(kpis.openCount)} в работе`),
-    kpiCard("Выиграно за период", numberFmt.format(kpis.wonCount), money.format(kpis.wonAmount)),
-    kpiCard("Средний чек", money.format(kpis.averageCheck), `${numberFmt.format(kpis.periodCount)} сделок в выборке`),
+    kpiCard("Сумма открытых сделок", formatMoney(kpis.openAmount, currency), `${numberFmt.format(kpis.openCount)} в работе${extraHint}`),
+    kpiCard("Выиграно за период", numberFmt.format(kpis.wonCount), formatMoney(kpis.wonAmount, currency)),
+    kpiCard("Средний чек", formatMoney(kpis.averageCheck, currency), `${numberFmt.format(kpis.periodCount)} сделок в выборке`),
   ].join("");
 
   if (!data.funnel.stages.length) {
@@ -182,13 +186,14 @@ function render(data) {
     funnelEl.innerHTML = data.funnel.stages
       .map((stage) => {
         const width = Math.max(6, Math.round(stage.amountShare * 100));
+        const cut = stage.truncated ? " · усечено" : "";
         return `<div class="stage">
           <div>
             <div class="stage-name">${escapeHtml(stage.name)}</div>
-            <div class="stage-cat">${escapeHtml(stage.categoryName)} · ${escapeHtml(stage.stageId)}</div>
+            <div class="stage-cat">${escapeHtml(stage.categoryName)} · ${escapeHtml(stage.stageId)}${cut}</div>
           </div>
           <div class="num">${numberFmt.format(stage.count)}</div>
-          <div class="num">${money.format(stage.amount)}</div>
+          <div class="num">${formatMoney(stage.amount, stage.currency || currency)}</div>
           <div class="bar"><span style="width:${width}%;background:${escapeHtml(stage.color)}"></span></div>
         </div>`;
       })
@@ -204,7 +209,7 @@ function render(data) {
     .map(
       (deal) => `<tr>
         <td>${escapeHtml(deal.title)}</td>
-        <td class="num">${money.format(deal.amount)}</td>
+        <td class="num">${formatMoney(deal.amount, deal.currency || currency)}</td>
         <td><span class="badge"><span class="dot"></span>${escapeHtml(deal.stageName)}</span></td>
         <td>${escapeHtml(deal.assignedByName)}</td>
         <td>${formatIso(deal.createdAt)}</td>
@@ -228,11 +233,33 @@ function showError(message) {
 
 function messageFromFailure(status, payload) {
   if (payload?.error?.message) return payload.error.message;
-  if (status === 401) return "Нет доступа: ключ недействителен или сессия истекла.";
+  if (status === 401) return "Нет сессии пользователя. Откройте дашборд из пункта «Дашборд сделок» в левом меню Битрикс24.";
   if (status === 403) return "Недостаточно прав для чтения CRM. Нужны скоупы crm и user.";
   if (status === 429) return "Превышен лимит запросов к API. Подождите несколько секунд и обновите страницу.";
   if (status === 502 || status === 503) return "Портал Битрикс24 или Вайбкод временно недоступен. Повторите попытку.";
   return "Не удалось получить данные.";
+}
+
+function formatMoney(amount, currency) {
+  const code = currency || "RUB";
+  let fmt = moneyCache.get(code);
+  if (!fmt) {
+    try {
+      fmt = new Intl.NumberFormat("ru-RU", {
+        style: "currency",
+        currency: code,
+        maximumFractionDigits: 0,
+      });
+    } catch {
+      fmt = {
+        format(value) {
+          return `${numberFmt.format(value)} ${code}`;
+        },
+      };
+    }
+    moneyCache.set(code, fmt);
+  }
+  return fmt.format(amount);
 }
 
 function isoDate(date) {
