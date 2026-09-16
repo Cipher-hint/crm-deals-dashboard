@@ -4,7 +4,7 @@ const path = require("path");
 const express = require("express");
 
 const PORT = Number(process.env.PORT) || 3000;
-const VIBE_API_KEY = process.env.VIBE_API_KEY || "";
+const VIBE_APP_KEY = process.env.VIBE_APP_KEY || "";
 const VIBE_API = "https://vibecode.bitrix24.tech/v1";
 const MOSCOW_OFFSET = "+03:00";
 const APP_META = {
@@ -38,43 +38,41 @@ app.get("/api/meta", (_req, res) => {
 
 app.get("/api/dashboard", async (req, res) => {
   try {
-    if (!VIBE_API_KEY) {
+    if (!VIBE_APP_KEY) {
       return res.status(500).json({
         success: false,
-        error: { code: "MISSING_VIBE_API_KEY", message: "Сервер запущен без ключа доступа к API." },
+        error: { code: "MISSING_VIBE_APP_KEY", message: "Сервер запущен без ключа приложения." },
       });
     }
 
+    const session = requireSession(req);
     const period = parsePeriod(req.query.from, req.query.to);
     if (!period.ok) {
       return res.status(400).json({ success: false, error: period.error });
     }
 
     const createdFilter = createdAtFilter(period.from, period.to);
+    const aggregate = [
+      { field: "*", function: "count" },
+      { field: "amount", function: "sum" },
+    ];
     const [funnelRes, openRes, wonRes, firstBatch, viewerRes] = await Promise.all([
-      vibe("POST", "/deals/aggregate", {
-        aggregate: [
-          { field: "*", function: "count" },
-          { field: "amount", function: "sum" },
-        ],
-        groupBy: ["stageId"],
+      vibe(session, "POST", "/deals/aggregate", {
+        aggregate,
+        groupBy: ["stageId", "currency"],
         filter: createdFilter,
       }),
-      vibe("POST", "/deals/aggregate", {
-        aggregate: [
-          { field: "*", function: "count" },
-          { field: "amount", function: "sum" },
-        ],
+      vibe(session, "POST", "/deals/aggregate", {
+        aggregate,
+        groupBy: ["currency"],
         filter: { ...createdFilter, closed: false },
       }),
-      vibe("POST", "/deals/aggregate", {
-        aggregate: [
-          { field: "*", function: "count" },
-          { field: "amount", function: "sum" },
-        ],
+      vibe(session, "POST", "/deals/aggregate", {
+        aggregate,
+        groupBy: ["currency"],
         filter: { ...createdFilter, stageSemanticId: "S" },
       }),
-      vibeBatch([
+      vibeBatch(session, [
         {
           id: "recent",
           entity: "deals",
@@ -101,33 +99,24 @@ app.get("/api/dashboard", async (req, res) => {
           },
         },
         {
-          id: "users",
-          entity: "users",
-          action: "search",
-          params: {
-            select: ["id", "name", "lastName", "active"],
-            limit: 200,
-            withTotal: false,
-            start: -1,
-          },
-        },
-        {
           id: "categories",
           entity: "deal-categories",
           action: "list",
           params: { limit: 50, withTotal: false, start: -1 },
         },
       ]),
-      vibe("GET", "/users/me").catch(() => ({ data: null })),
+      vibe(session, "GET", "/users/me").catch(() => ({ data: null })),
     ]);
 
     requireBatchSuccess(firstBatch, ["recent"]);
+    const recentRows = firstBatch.results.recent || [];
+    const assigneeIds = uniqueIds(recentRows.map((deal) => deal.assignedById));
 
     const categories = (firstBatch.results.categories || [])
       .map((item) => ({ id: Number(item.id), name: item.name }))
       .filter((item) => Number.isFinite(item.id));
     const extraFunnels = categories.filter((item) => item.id > 0);
-    const statusCalls = [
+    const dictCalls = [
       {
         id: "st_default",
         entity: "statuses",
@@ -141,38 +130,43 @@ app.get("/api/dashboard", async (req, res) => {
         params: { filter: { entityId: `DEAL_STAGE_${item.id}` }, limit: 100, withTotal: false, start: -1 },
       })),
     ];
-    const statusBatch = await vibeBatch(statusCalls);
+    if (assigneeIds.length) {
+      dictCalls.push({
+        id: "assignees",
+        entity: "users",
+        action: "search",
+        params: {
+          select: ["id", "name", "lastName", "active"],
+          filter: { id: assigneeIds },
+          limit: Math.min(Math.max(assigneeIds.length, 1), 50),
+          withTotal: false,
+          start: -1,
+        },
+      });
+    }
+    const dictBatch = await vibeBatch(session, dictCalls);
 
     const dictionaries = buildDictionaries({
       viewer: viewerRes.data,
       categories,
-      users: firstBatch.results.users || [],
-      statusLists: statusCalls.map((call) => statusBatch.results[call.id] || []),
+      users: dictBatch.results.assignees || [],
+      statusLists: dictCalls
+        .filter((call) => call.entity === "statuses")
+        .map((call) => dictBatch.results[call.id] || []),
     });
 
     const funnelAgg = funnelRes.data || {};
     const openAgg = openRes.data || {};
     const wonAgg = wonRes.data || {};
     const stages = mapFunnel(funnelAgg, dictionaries);
-    const periodCount = stages.reduce((sum, stage) => sum + stage.count, 0);
-    const periodAmount = stages.reduce((sum, stage) => sum + stage.amount, 0);
-    const wonCount = Number(wonAgg.count || 0);
-    const wonAmount = Number(wonAgg.aggregates?.amount?.sum || 0);
-    const kpis = {
-      openAmount: Number(openAgg.aggregates?.amount?.sum || 0),
-      openCount: Number(openAgg.count || 0),
-      wonCount,
-      wonAmount,
-      averageCheck: wonCount > 0 ? wonAmount / wonCount : periodCount > 0 ? periodAmount / periodCount : 0,
-      periodCount,
-      periodAmount,
-    };
+    const kpis = kpisFromCurrencyGroups(openAgg.groups || [], wonAgg.groups || [], stages);
+    const truncated = isTruncated(funnelAgg, openAgg, wonAgg);
 
-    const recentDeals = (firstBatch.results.recent || []).map((deal) => ({
+    const recentDeals = recentRows.map((deal) => ({
       id: deal.id,
       title: deal.title || "Без названия",
       amount: Number(deal.amount || 0),
-      currency: deal.currency || "RUB",
+      currency: deal.currency || kpis.currency || "RUB",
       stageId: deal.stageId,
       stageName: dictionaries.stageName(deal.stageId),
       stageSemanticId: deal.stageSemanticId,
@@ -191,10 +185,10 @@ app.get("/api/dashboard", async (req, res) => {
           to: period.to,
           label: period.label,
         },
-        kpis: { ...kpis, currency: "RUB" },
+        kpis,
         funnel: {
           stages,
-          truncated: Boolean(funnelAgg.meta?.truncated),
+          truncated,
         },
         recentDeals,
         categories: dictionaries.categories,
@@ -216,6 +210,18 @@ app.get("*", (_req, res) => {
 app.listen(PORT, "0.0.0.0", () => {
   process.stdout.write(`deals-dashboard listening on ${PORT}\n`);
 });
+
+function requireSession(req) {
+  const raw = String(req.headers["x-vibe-authorization"] || "").trim();
+  const bearer = raw.replace(/^Bearer\s+/i, "").trim();
+  if (!bearer) {
+    const err = new Error("Нет сессии пользователя. Откройте дашборд из пункта «Дашборд сделок» в левом меню Битрикс24.");
+    err.code = "TOKEN_MISSING";
+    err.status = 401;
+    throw err;
+  }
+  return bearer;
+}
 
 function parsePeriod(fromRaw, toRaw) {
   const from = normalizeDate(fromRaw, "start");
@@ -258,6 +264,18 @@ function createdAtFilter(from, to) {
   if (from) filter[">=createdAt"] = from;
   if (to) filter["<=createdAt"] = to;
   return filter;
+}
+
+function uniqueIds(values) {
+  const ids = [];
+  const seen = new Set();
+  for (const value of values) {
+    const id = Number(value);
+    if (!Number.isFinite(id) || id <= 0 || seen.has(id)) continue;
+    seen.add(id);
+    ids.push(id);
+  }
+  return ids;
 }
 
 function buildDictionaries({ viewer, categories, users, statusLists }) {
@@ -341,11 +359,77 @@ function mapFunnel(funnelAgg, dictionaries) {
         sort: meta.sort,
         count,
         amount,
+        currency: group.currency || "RUB",
+        truncated: Boolean(group.truncated || group.aggregates?.amount?.truncated),
         countShare: maxCount ? count / maxCount : 0,
         amountShare: maxAmount ? amount / maxAmount : 0,
       };
     })
     .sort((a, b) => a.categoryId - b.categoryId || a.sort - b.sort || a.name.localeCompare(b.name, "ru"));
+}
+
+function kpisFromCurrencyGroups(openGroups, wonGroups, stages) {
+  const byCurrency = new Map();
+  const ensure = (code) => {
+    const currency = code || "RUB";
+    if (!byCurrency.has(currency)) {
+      byCurrency.set(currency, {
+        currency,
+        openAmount: 0,
+        openCount: 0,
+        wonCount: 0,
+        wonAmount: 0,
+        periodCount: 0,
+        periodAmount: 0,
+      });
+    }
+    return byCurrency.get(currency);
+  };
+
+  for (const group of openGroups) {
+    const row = ensure(group.currency);
+    row.openCount += Number(group.count || 0);
+    row.openAmount += Number(group.aggregates?.amount?.sum || 0);
+  }
+  for (const group of wonGroups) {
+    const row = ensure(group.currency);
+    row.wonCount += Number(group.count || 0);
+    row.wonAmount += Number(group.aggregates?.amount?.sum || 0);
+  }
+  for (const stage of stages) {
+    const row = ensure(stage.currency);
+    row.periodCount += Number(stage.count || 0);
+    row.periodAmount += Number(stage.amount || 0);
+  }
+
+  const rows = [...byCurrency.values()].map((row) => ({
+    ...row,
+    averageCheck: row.wonCount > 0 ? row.wonAmount / row.wonCount : row.periodCount > 0 ? row.periodAmount / row.periodCount : 0,
+  }));
+  rows.sort((a, b) => b.periodAmount - a.periodAmount || a.currency.localeCompare(b.currency));
+  const primary = rows[0] || {
+    currency: "RUB",
+    openAmount: 0,
+    openCount: 0,
+    wonCount: 0,
+    wonAmount: 0,
+    averageCheck: 0,
+    periodCount: 0,
+    periodAmount: 0,
+  };
+  return {
+    ...primary,
+    currencies: rows.map((row) => row.currency),
+    byCurrency: rows,
+  };
+}
+
+function isTruncated(...aggs) {
+  return aggs.some((agg) => {
+    if (!agg) return false;
+    if (agg.meta?.truncated || agg.truncated || agg.aggregates?.amount?.truncated) return true;
+    return (agg.groups || []).some((group) => group.truncated || group.aggregates?.amount?.truncated);
+  });
 }
 
 function requireBatchSuccess(batch, requiredIds) {
@@ -367,7 +451,7 @@ function requireBatchSuccess(batch, requiredIds) {
 
 function guessStatusFromCode(code) {
   const text = String(code || "");
-  if (/401|UNAUTHORIZED|INVALID_API_KEY|MISSING_API_KEY|INVALID_SESSION/.test(text)) return 401;
+  if (/401|UNAUTHORIZED|INVALID_API_KEY|MISSING_API_KEY|INVALID_SESSION|TOKEN_MISSING|SESSION_APP_MISMATCH/.test(text)) return 401;
   if (/403|FORBIDDEN|ACCESS_DENIED|WRITE_BLOCKED/.test(text)) return 403;
   if (/429|RATE_LIMIT|QUEUE_OVERFLOW|QUEUE_TIMEOUT/.test(text)) return 429;
   return 502;
@@ -376,8 +460,12 @@ function guessStatusFromCode(code) {
 function mapPublicError(err) {
   const status = Number(err.status) || 502;
   const code = err.code || "DASHBOARD_FAILED";
-  if (status === 401 || /INVALID_API_KEY|MISSING_API_KEY|UNAUTHORIZED|INVALID_SESSION/.test(code)) {
-    return { status: 401, code: "UNAUTHORIZED", message: "Нет доступа: ключ недействителен или сессия истекла." };
+  if (status === 401 || /TOKEN_MISSING|INVALID_SESSION|INVALID_API_KEY|MISSING_API_KEY|UNAUTHORIZED|SESSION_APP_MISMATCH/.test(code)) {
+    return {
+      status: 401,
+      code: code === "TOKEN_MISSING" ? "TOKEN_MISSING" : "UNAUTHORIZED",
+      message: "Нет сессии пользователя. Откройте дашборд из пункта «Дашборд сделок» в левом меню Битрикс24.",
+    };
   }
   if (status === 403 || /ACCESS_DENIED|FORBIDDEN|WRITE_BLOCKED|SCOPE_NOT_ALLOWED|MANAGEMENT_KEY/.test(code)) {
     return { status: 403, code: "FORBIDDEN", message: "Недостаточно прав для чтения CRM. Нужны скоупы crm и user." };
@@ -394,23 +482,23 @@ function mapPublicError(err) {
   return { status: 502, code: "UPSTREAM_UNAVAILABLE", message: "Не удалось загрузить данные CRM. Повторите попытку." };
 }
 
-async function vibeBatch(calls) {
+async function vibeBatch(session, calls) {
   try {
-    return await vibeBatchOnce(calls);
+    return await vibeBatchOnce(session, calls);
   } catch (err) {
     if (err.status === 403 || err.code === "MANAGEMENT_KEY_NO_ENTITY_ACCESS") {
-      return serialBatch(calls);
+      return serialBatch(session, calls);
     }
     throw err;
   }
 }
 
-async function vibeBatchOnce(calls) {
+async function vibeBatchOnce(session, calls) {
   const pending = calls.slice();
   const results = {};
   const errors = {};
   for (let attempt = 0; attempt <= MAX_RETRIES && pending.length; attempt += 1) {
-    const payload = await vibe("POST", "/batch", { calls: pending });
+    const payload = await vibe(session, "POST", "/batch", { calls: pending });
     const batchResults = payload.data?.results || {};
     const batchErrors = payload.data?.errors || {};
     const retry = [];
@@ -443,12 +531,12 @@ async function vibeBatchOnce(calls) {
   return { results, errors };
 }
 
-async function serialBatch(calls) {
+async function serialBatch(session, calls) {
   const results = {};
   const errors = {};
   for (const call of calls) {
     try {
-      results[call.id] = await vibeCall(call);
+      results[call.id] = await vibeCall(session, call);
     } catch (err) {
       errors[call.id] = { code: err.code || "CALL_FAILED", message: err.message };
     }
@@ -456,9 +544,9 @@ async function serialBatch(calls) {
   return { results, errors };
 }
 
-async function vibeCall(call) {
+async function vibeCall(session, call) {
   if (call.action === "search") {
-    const payload = await vibe("POST", `/${call.entity}/search`, call.params);
+    const payload = await vibe(session, "POST", `/${call.entity}/search`, call.params);
     return payload.data;
   }
   if (call.action === "list") {
@@ -468,13 +556,13 @@ async function vibeCall(call) {
     if (params.withTotal != null) query.set("withTotal", String(params.withTotal));
     if (params.start != null) query.set("start", String(params.start));
     const suffix = query.toString() ? `?${query}` : "";
-    const payload = await vibe("GET", `/${call.entity}${suffix}`);
+    const payload = await vibe(session, "GET", `/${call.entity}${suffix}`);
     return payload.data;
   }
   throw Object.assign(new Error(`Неподдерживаемое действие ${call.action}`), { code: "ACTION_NOT_SUPPORTED", status: 400 });
 }
 
-async function vibe(method, pathname, body) {
+async function vibe(session, method, pathname, body) {
   let lastError = null;
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt += 1) {
     let response;
@@ -482,7 +570,8 @@ async function vibe(method, pathname, body) {
       response = await fetch(`${VIBE_API}${pathname}`, {
         method,
         headers: {
-          "X-Api-Key": VIBE_API_KEY,
+          "X-Api-Key": VIBE_APP_KEY,
+          Authorization: `Bearer ${session}`,
           Accept: "application/json",
           ...(body ? { "Content-Type": "application/json" } : {}),
         },
