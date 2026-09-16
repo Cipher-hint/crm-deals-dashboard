@@ -1,6 +1,6 @@
 {
   "name": "crm-deals-dashboard",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "private": true,
   "description": "Bitrix24 CRM deals analytics dashboard for VibeCode",
   "main": "server.js",

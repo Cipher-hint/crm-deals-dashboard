@@ -3,6 +3,11 @@
 Формат — [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/).
 Версии — [Semantic Versioning](https://semver.org/lang/ru/).
 
+## [1.2.1] — 2026-09-16
+
+### Fixed
+- Агрегаты сделок больше не группируются по `currency`: на Entity API поле недоступно в `groupBy`. Воронка — по `stageId`, KPI — итоги без разреза валют; код валюты для оформления берётся из последних сделок.
+
 ## [1.2.0] — 2026-09-16
 
 ### Changed

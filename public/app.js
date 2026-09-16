@@ -76,7 +76,7 @@ async function copySupportDump() {
   }
   const dump = [
     "Приложение: Дашборд сделок CRM",
-    `Версия: ${meta.version || "1.2.0"}`,
+    `Версия: ${meta.version || "1.2.1"}`,
     `Разработчик: ${meta.vendor || "safekit.tech"}`,
     `Адрес: ${location.href}`,
     `User-Agent: ${navigator.userAgent}`,
